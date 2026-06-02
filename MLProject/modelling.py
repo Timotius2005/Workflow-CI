@@ -28,11 +28,8 @@ from sklearn.metrics import (
     f1_score, precision_score, recall_score, roc_auc_score,
 )
 
-try:
-    import dagshub
-    DAGSHUB_AVAILABLE = True
-except ImportError:
-    DAGSHUB_AVAILABLE = False
+# dagshub not needed — tracking URI set directly via mlflow.set_tracking_uri()
+DAGSHUB_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -69,18 +66,22 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 def setup_mlflow(dagshub_username: str, dagshub_repo: str) -> None:
-    if DAGSHUB_AVAILABLE and dagshub_username:
-        logger.info("Initialising DagsHub: %s / %s", dagshub_username, dagshub_repo)
-        dagshub.init(repo_owner=dagshub_username, repo_name=dagshub_repo, mlflow=True)
-    else:
-        tracking_uri = os.getenv(
-            "MLFLOW_TRACKING_URI",
-            f"file://{os.path.abspath('./mlruns')}",
-        )
-        mlflow.set_tracking_uri(tracking_uri)
-        logger.info("MLflow tracking URI: %s", tracking_uri)
+    # When invoked via `mlflow run .`, MLFLOW_RUN_ID is already set by the
+    # project runner. We must NOT call set_experiment() in that case or it
+    # conflicts with the pre-created run.
+    inside_project = bool(os.getenv("MLFLOW_RUN_ID"))
 
-    mlflow.set_experiment("mlproject_training")
+    if dagshub_username:
+        tracking_uri = f"https://dagshub.com/{dagshub_username}/{dagshub_repo}.mlflow"
+        mlflow.set_tracking_uri(tracking_uri)
+        logger.info("Tracking URI (DagsHub): %s", tracking_uri)
+    else:
+        abs_uri = os.path.abspath("./mlruns").replace("\\", "/")
+        mlflow.set_tracking_uri(f"file:///{abs_uri}")
+        logger.info("Tracking URI (local): %s", mlflow.get_tracking_uri())
+
+    if not inside_project:
+        mlflow.set_experiment("mlproject_training")
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +175,14 @@ def train(args: argparse.Namespace) -> None:
         n_jobs=-1,
     )
 
-    with mlflow.start_run(run_name="mlproject_rf_run") as run:
+    # If `mlflow run .` already created a run, reuse it; otherwise create one
+    existing_run_id = os.getenv("MLFLOW_RUN_ID")
+    run_ctx = (
+        mlflow.start_run(run_id=existing_run_id)
+        if existing_run_id
+        else mlflow.start_run(run_name="mlproject_rf_run")
+    )
+    with run_ctx as run:
         run_id = run.info.run_id
 
         # Manual parameter logging

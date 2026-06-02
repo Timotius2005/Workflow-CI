@@ -31,12 +31,4 @@ entry_points:
         type:    string
         default: "Eksperimen_SML_TimotiusKristafaelHarjanto"
 
-    command: >
-      python modelling.py
-        --n_estimators      {n_estimators}
-        --max_depth         {max_depth}
-        --min_samples_split {min_samples_split}
-        --min_samples_leaf  {min_samples_leaf}
-        --data_path         {data_path}
-        --dagshub_username  {dagshub_username}
-        --dagshub_repo      {dagshub_repo}
+    command: "python modelling.py --n_estimators {n_estimators} --max_depth {max_depth} --min_samples_split {min_samples_split} --min_samples_leaf {min_samples_leaf} --data_path {data_path} --dagshub_username {dagshub_username} --dagshub_repo {dagshub_repo}"
