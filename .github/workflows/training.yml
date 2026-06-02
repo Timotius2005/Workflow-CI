@@ -232,29 +232,12 @@ jobs:
           tar -czf ../model-${{ needs.train.outputs.model_version }}.tar.gz .
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name:   ${{ needs.train.outputs.model_version }}
-          name:       "Model Release ${{ needs.train.outputs.model_version }}"
-          body: |
-            ## 🤖 Automated Model Release
-
-            **Student**: Timotius Kristafael Harjanto
-            **Run**:     ${{ github.run_number }}
-            **Commit**:  ${{ github.sha }}
-
-            ### Docker Image
-            ```
-            docker pull ${{ env.DOCKER_IMAGE }}:${{ needs.train.outputs.model_version }}
-            ```
-
-            ### Serve Model
-            ```bash
-            docker run -p 5001:5001 ${{ env.DOCKER_IMAGE }}:${{ needs.train.outputs.model_version }}
-            curl http://localhost:5001/ping
-            ```
-          files: model-${{ needs.train.outputs.model_version }}.tar.gz
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.train.outputs.model_version }}"
+          gh release create "$VERSION" \
+            "model-${VERSION}.tar.gz" \
+            --title "Model Release ${VERSION}" \
+            --notes "Automated release | Run ${{ github.run_number }} | Commit ${{ github.sha }} | Docker: docker pull ${{ env.DOCKER_IMAGE }}:${VERSION}" \
+            --repo "${{ github.repository }}"
