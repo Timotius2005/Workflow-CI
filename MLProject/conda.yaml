@@ -1,0 +1,32 @@
+## Conda environment for MLflow Project
+## Student: Timotius Kristafael Harjanto — SMSML Dicoding
+
+name: smsml-adult-income
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.12.7
+  - pip
+
+  - pip:
+    # Core ML
+    - mlflow==2.19.0
+    - scikit-learn==1.5.2
+    - pandas==2.2.3
+    - numpy==1.26.4
+
+    # Visualisation
+    - matplotlib==3.9.2
+    - seaborn==0.13.2
+
+    # DagsHub integration
+    - dagshub==0.3.45
+
+    # Monitoring / serving
+    - flask==3.0.3
+    - prometheus-client==0.20.0
+    - psutil==5.9.8
+    - requests==2.32.3

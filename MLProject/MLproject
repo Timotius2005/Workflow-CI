@@ -1,0 +1,42 @@
+## MLflow Project specification
+## Student: Timotius Kristafael Harjanto — SMSML Dicoding
+
+name: adult_income_ml
+
+conda_env: conda.yaml
+
+entry_points:
+
+  main:
+    parameters:
+      n_estimators:
+        type:    int
+        default: 200
+      max_depth:
+        type:    int
+        default: 20
+      min_samples_split:
+        type:    int
+        default: 2
+      min_samples_leaf:
+        type:    int
+        default: 1
+      data_path:
+        type:    string
+        default: "./dataset_preprocessed/"
+      dagshub_username:
+        type:    string
+        default: ""
+      dagshub_repo:
+        type:    string
+        default: "Eksperimen_SML_TimotiusKristafaelHarjanto"
+
+    command: >
+      python modelling.py
+        --n_estimators      {n_estimators}
+        --max_depth         {max_depth}
+        --min_samples_split {min_samples_split}
+        --min_samples_leaf  {min_samples_leaf}
+        --data_path         {data_path}
+        --dagshub_username  {dagshub_username}
+        --dagshub_repo      {dagshub_repo}

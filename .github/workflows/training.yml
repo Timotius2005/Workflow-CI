@@ -1,0 +1,258 @@
+## ─────────────────────────────────────────────────────────────────────────
+## GitHub Actions — ML Training Pipeline + Docker Build & Push
+## Student : Timotius Kristafael Harjanto
+## Criterion 3 — Advanced
+##
+## Required GitHub Secrets:
+##   DAGSHUB_USERNAME    — DagsHub account username
+##   DAGSHUB_TOKEN       — DagsHub personal access token
+##   DOCKER_USERNAME     — Docker Hub username
+##   DOCKER_PASSWORD     — Docker Hub password / access token
+##
+## Pipeline:
+##   1.  Checkout code
+##   2.  Set up Python 3.12.7
+##   3.  Install dependencies
+##   4.  Download preprocessed dataset (from Eksperimen repo artifact or inline)
+##   5.  Run MLflow Project  (mlflow run .)
+##   6.  Upload trained model as GitHub Artifact
+##   7.  Build Docker image  (multi-arch via buildx)
+##   8.  Push Docker image to Docker Hub
+##   9.  Create GitHub Release with model artifact
+## ─────────────────────────────────────────────────────────────────────────
+
+name: ML Training Pipeline — CI/CD
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "MLProject/**"
+      - ".github/workflows/training.yml"
+
+  workflow_dispatch:
+    inputs:
+      n_estimators:
+        description: "RF: number of trees"
+        required: false
+        default: "200"
+      max_depth:
+        description: "RF: max tree depth (0 = unlimited)"
+        required: false
+        default: "20"
+      min_samples_split:
+        description: "RF: min samples to split a node"
+        required: false
+        default: "2"
+      min_samples_leaf:
+        description: "RF: min samples per leaf"
+        required: false
+        default: "1"
+
+env:
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/adult-income-ml
+  PYTHON_VERSION: "3.12.7"
+
+jobs:
+  # ══════════════════════════════════════════════════════════════
+  train:
+    name: "Train Model — MLflow Project"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    outputs:
+      model_version: ${{ steps.tag.outputs.version }}
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Python ──────────────────────────────────────────────
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      # ── 3. Dependencies ────────────────────────────────────────
+      - name: Install ML dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            mlflow==2.19.0 \
+            scikit-learn==1.5.2 \
+            pandas==2.2.3 \
+            numpy==1.26.4 \
+            matplotlib==3.9.2 \
+            seaborn==0.13.2 \
+            dagshub==0.3.45 \
+            psutil==5.9.8
+
+      # ── 4. Fetch pre-processed dataset ────────────────────────
+      - name: Download preprocessed dataset
+        run: |
+          mkdir -p MLProject/dataset_preprocessed
+          # Try to download from UCI and preprocess inline if dataset not committed
+          if [ ! -f "MLProject/dataset_preprocessed/train.csv" ]; then
+            echo "Preprocessing dataset inline..."
+            pip install scikit-learn pandas numpy
+            python - <<'PYEOF'
+          import urllib.request, os, pandas as pd, numpy as np
+          from sklearn.preprocessing import LabelEncoder, StandardScaler
+          from sklearn.model_selection import train_test_split
+
+          url = "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+          cols = ["age","workclass","fnlwgt","education","education_num",
+                  "marital_status","occupation","relationship","race","sex",
+                  "capital_gain","capital_loss","hours_per_week","native_country","income"]
+          os.makedirs("MLProject/dataset_preprocessed", exist_ok=True)
+          urllib.request.urlretrieve(url, "/tmp/adult.csv")
+          df = pd.read_csv("/tmp/adult.csv", names=cols, skipinitialspace=True, na_values="?").dropna()
+          df["income"] = (df["income"].str.strip().str.rstrip(".") == ">50K").astype(int)
+          cat = ["workclass","education","marital_status","occupation","relationship","race","sex","native_country"]
+          le = LabelEncoder()
+          for c in cat: df[c] = le.fit_transform(df[c])
+          df["capital_net"] = df["capital_gain"] - df["capital_loss"]
+          df["has_capital_gain"] = (df["capital_gain"]>0).astype(int)
+          df["has_capital_loss"] = (df["capital_loss"]>0).astype(int)
+          high_ed = {"Bachelors","Some-college","Masters","Doctorate","Prof-school"}
+          df["higher_education"] = df["education_name"].isin(high_ed).astype(int) if "education_name" in df else 0
+          df["is_married"] = df["marital_status"].isin([2,3]).astype(int)
+          drop_cols = ["fnlwgt"]
+          X = df.drop(columns=["income"]+drop_cols, errors="ignore")
+          y = df["income"]
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+          sc = StandardScaler()
+          num = ["age","education_num","capital_gain","capital_loss","hours_per_week","capital_net"]
+          num = [c for c in num if c in X_tr.columns]
+          X_tr[num] = sc.fit_transform(X_tr[num]); X_te[num] = sc.transform(X_te[num])
+          pd.concat([X_tr.reset_index(drop=True), y_tr.reset_index(drop=True)],axis=1).to_csv("MLProject/dataset_preprocessed/train.csv",index=False)
+          pd.concat([X_te.reset_index(drop=True), y_te.reset_index(drop=True)],axis=1).to_csv("MLProject/dataset_preprocessed/test.csv",index=False)
+          print("Dataset ready:", X_tr.shape, X_te.shape)
+          PYEOF
+          fi
+
+      # ── 5. Run MLflow Project ──────────────────────────────────
+      - name: Execute MLflow Project
+        working-directory: MLProject
+        env:
+          DAGSHUB_USERNAME:          ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_TOKEN:             ${{ secrets.DAGSHUB_TOKEN }}
+          MLFLOW_TRACKING_USERNAME:  ${{ secrets.DAGSHUB_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD:  ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          mlflow run . --env-manager=local \
+            -P n_estimators=${{ github.event.inputs.n_estimators || '200' }} \
+            -P max_depth=${{ github.event.inputs.max_depth || '20' }} \
+            -P min_samples_split=${{ github.event.inputs.min_samples_split || '2' }} \
+            -P min_samples_leaf=${{ github.event.inputs.min_samples_leaf || '1' }} \
+            -P dagshub_username=${{ secrets.DAGSHUB_USERNAME }} \
+            -P data_path=./dataset_preprocessed/
+
+      # ── 6. Upload model artifact ───────────────────────────────
+      - name: Upload trained model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-model-run-${{ github.run_number }}
+          path: |
+            MLProject/model/
+            MLProject/artifacts/
+          retention-days: 90
+
+      # ── 7. Compute version tag ─────────────────────────────────
+      - name: Compute version tag
+        id: tag
+        run: echo "version=v1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+  # ══════════════════════════════════════════════════════════════
+  docker:
+    name: "Build & Push Docker Image"
+    needs: train
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download trained model
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-model-run-${{ github.run_number }}
+          path: MLProject/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context:    MLProject
+          file:       MLProject/Dockerfile
+          push:       true
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:latest
+            ${{ env.DOCKER_IMAGE }}:${{ needs.train.outputs.model_version }}
+            ${{ env.DOCKER_IMAGE }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      - name: Image digest
+        run: echo "Docker image pushed successfully"
+
+  # ══════════════════════════════════════════════════════════════
+  release:
+    name: "Create GitHub Release"
+    needs: [train, docker]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download model artifact for release
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-model-run-${{ github.run_number }}
+          path: release-assets/
+
+      - name: Compress model
+        run: |
+          cd release-assets
+          tar -czf ../model-${{ needs.train.outputs.model_version }}.tar.gz .
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name:   ${{ needs.train.outputs.model_version }}
+          name:       "Model Release ${{ needs.train.outputs.model_version }}"
+          body: |
+            ## 🤖 Automated Model Release
+
+            **Student**: Timotius Kristafael Harjanto
+            **Run**:     ${{ github.run_number }}
+            **Commit**:  ${{ github.sha }}
+
+            ### Docker Image
+            ```
+            docker pull ${{ env.DOCKER_IMAGE }}:${{ needs.train.outputs.model_version }}
+            ```
+
+            ### Serve Model
+            ```bash
+            docker run -p 5001:5001 ${{ env.DOCKER_IMAGE }}:${{ needs.train.outputs.model_version }}
+            curl http://localhost:5001/ping
+            ```
+          files: model-${{ needs.train.outputs.model_version }}.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

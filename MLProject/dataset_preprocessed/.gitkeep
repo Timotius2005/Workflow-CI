@@ -1,0 +1,3 @@
+# Copy train.csv and test.csv here from the Eksperimen repo.
+# The CI pipeline (training.yml) also generates these files inline
+# if they are not already committed.

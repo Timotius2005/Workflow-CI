@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Training outputs
+MLProject/model/
+MLProject/artifacts/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
