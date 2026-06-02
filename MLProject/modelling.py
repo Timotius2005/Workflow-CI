@@ -66,19 +66,20 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 def setup_mlflow(dagshub_username: str, dagshub_repo: str) -> None:
-    # When invoked via `mlflow run .`, MLFLOW_RUN_ID is already set by the
-    # project runner. We must NOT call set_experiment() in that case or it
-    # conflicts with the pre-created run.
+    # MLFLOW_RUN_ID is set by `mlflow run .` — tells us we're inside a project
     inside_project = bool(os.getenv("MLFLOW_RUN_ID"))
 
-    if dagshub_username:
-        tracking_uri = f"https://dagshub.com/{dagshub_username}/{dagshub_repo}.mlflow"
-        mlflow.set_tracking_uri(tracking_uri)
-        logger.info("Tracking URI (DagsHub): %s", tracking_uri)
-    else:
-        abs_uri = os.path.abspath("./mlruns").replace("\\", "/")
-        mlflow.set_tracking_uri(f"file:///{abs_uri}")
-        logger.info("Tracking URI (local): %s", mlflow.get_tracking_uri())
+    # Only set tracking URI if not already provided by the environment
+    # (CI sets MLFLOW_TRACKING_URI before calling `mlflow run .`)
+    if not os.getenv("MLFLOW_TRACKING_URI"):
+        if dagshub_username:
+            uri = f"https://dagshub.com/{dagshub_username}/{dagshub_repo}.mlflow"
+        else:
+            abs_path = os.path.abspath("./mlruns").replace("\\", "/")
+            uri = f"file:///{abs_path}"
+        mlflow.set_tracking_uri(uri)
+
+    logger.info("MLflow tracking URI: %s", mlflow.get_tracking_uri())
 
     if not inside_project:
         mlflow.set_experiment("mlproject_training")
